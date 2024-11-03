@@ -1,3 +1,7 @@
+import numpy as np
+np.bool = np.bool_
+np.int  = int
+
 from argparse import ArgumentParser
 
 import os
@@ -29,7 +33,7 @@ def cli_main():
     parser.add_argument('--batch_size', default=64, type=int)
     parser.add_argument('--epoch', default=16, type=int)
     parser.add_argument('--root', default='data/gaze_refine', type=str)
-    parser.add_argument('--num-gpus', default=8, type=int)
+    parser.add_argument('--num-gpus', default=1, type=int)
     parser.add_argument('--tf32', action='store_true')
     parser = pl.Trainer.add_argparse_args(parser)
     args = parser.parse_args()

@@ -73,3 +73,8 @@ class GazeModel(pl.LightningModule):
                 'interval':'epoch',
                 'frequency': 1}
         return [opt], [lr_scheduler]
+
+    def lr_scheduler_step(self, scheduler, optimizer_idx, metric):
+        # Manually step the scheduler at each epoch or step as required
+        # Here, we're assuming the scheduler is updated every epoch
+        scheduler.step(self.current_epoch)  # pass epoch if required by LambdaLR
