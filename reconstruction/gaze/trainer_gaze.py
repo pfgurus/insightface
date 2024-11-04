@@ -1,3 +1,5 @@
+import time
+
 import numpy as np
 np.bool = np.bool_
 np.int  = int
@@ -60,7 +62,7 @@ def cli_main():
     # model
     # ------------
     model = GazeModel(backbone=args.backbone, epoch=args.epoch)
-    ckpt_path = '../../logs/gaze'
+    ckpt_path = f'../../logs/gaze_{time.strftime("%Y-%m-%d_%H-%M-%S")}'
     if not os.path.exists(ckpt_path):
         os.makedirs(ckpt_path)
 
