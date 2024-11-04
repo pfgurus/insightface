@@ -53,14 +53,14 @@ def cli_main():
     val_set = GazeDataset(root_dir=args.root, is_train=False)
     print('train data size:', len(train_set))
 
-    train_loader = DataLoader(train_set, batch_size=args.batch_size, shuffle=True, num_workers=2, pin_memory=True)
-    val_loader = DataLoader(val_set, batch_size=args.batch_size, shuffle=False)
+    train_loader = DataLoader(train_set, batch_size=args.batch_size, shuffle=True, num_workers=8, pin_memory=True)
+    val_loader = DataLoader(val_set, batch_size=args.batch_size, shuffle=False, num_workers=4)
 
     # ------------
     # model
     # ------------
     model = GazeModel(backbone=args.backbone, epoch=args.epoch)
-    ckpt_path = 'work_dirs/gaze'
+    ckpt_path = '../../logs/gaze'
     if not os.path.exists(ckpt_path):
         os.makedirs(ckpt_path)
 
@@ -80,7 +80,7 @@ def cli_main():
         accelerator="gpu",
         strategy="ddp",
         benchmark=True,
-		logger=TensorBoardLogger(osp.join(ckpt_path, 'logs')),
+		logger=TensorBoardLogger(ckpt_path),
         callbacks=[checkpoint_callback, lr_monitor],
         check_val_every_n_epoch=1,
         #progress_bar_refresh_rate=1,
