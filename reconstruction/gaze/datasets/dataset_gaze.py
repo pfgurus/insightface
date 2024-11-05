@@ -94,7 +94,7 @@ class GazeDataset(Dataset):
                     A.GaussianBlur(blur_limit=(1,7), p=0.1),
                     A.MotionBlur(blur_limit=(5,13), p=0.1),
                     A.ImageCompression(quality_lower=10, quality_upper=90, p=0.05),
-                    A.ShiftScaleRotate(shift_limit=0.1, scale_limit=0.2, rotate_limit=30, interpolation=cv2.INTER_LINEAR, 
+                    A.ShiftScaleRotate(shift_limit=0.05, scale_limit=0.05, rotate_limit=0, interpolation=cv2.INTER_LINEAR,
                         border_mode=cv2.BORDER_CONSTANT, value=0, mask_value=0, p=0.6),
                     #A.HorizontalFlip(p=0.5),
                     RectangleBorderAugmentation(limit=0.2, fill_value=0, p=0.1),

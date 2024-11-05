@@ -87,6 +87,13 @@ class GazeModel(pl.LightningModule):
         loss = self.cal_loss(y_hat, y)
         self.log('val_loss', loss, on_step=True)
 
+        if batch_idx == 0:
+            b = y.shape[0]
+            gaze = self.y_to_gaze_vector(y)
+            gaze_hat = self.y_to_gaze_vector(y_hat.view(b,-1,3))
+            log_image = make_log_image(x, 'src', Dir(gaze, length=50, color=(0,1,0)),Dir(gaze_hat,length=50))
+            self.logger.experiment.add_images('val/imgs', log_image, dataformats='NCHW', global_step=self.current_epoch)
+
     def y_to_gaze_vector(self, ys:torch.Tensor):
         ys = ys.detach().cpu().numpy()
         ys[..., 0:2] += 1
@@ -257,13 +264,4 @@ class GazeModel(pl.LightningModule):
         gaze_xy = (vec_r[:2] + vec_l[:2]) / 2.0
 
         return gaze_xy
-
-    def log_images(self, imgs: torch.Tensor, gaze_vectors: torch.Tensor):
-        log_images = []
-        for i in range(imgs.shape[0]):
-            if gaze_vectors[i] is None:
-                continue
-
-            img_np = np.clip((imgs[i].detach().cpu().numpy() + 1) * 127.5, 0, 255).transpose(1, 2, 0).astype(np.uint8)[...,::-1]
-            gaze_xy = gaze_vectors[i].detach().cpu().numpy()
 
