@@ -10,6 +10,7 @@ import torch
 import torch.nn as nn
 import timm
 from datasets.test_dataset import GazeImageDataset
+from datasets.ffhq_dgaze_dataset import FFHQDGazeDataset
 import numpy as np
 from torchmetrics import ConfusionMatrix
 from torch.utils.data import DataLoader
@@ -37,6 +38,8 @@ class GazeModel(pl.LightningModule):
         self.num_eye = 481*2
 
         self.test_dataset = GazeImageDataset()
+        self.ffhq_dgaze_dataset = FFHQDGazeDataset()
+
         self.gazemetric_outputs = {'y':[], 'y_hat':[]}
         self.gazemetric_tested = False
         self.gaze_predictor = GazePredictor()
