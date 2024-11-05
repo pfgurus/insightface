@@ -60,11 +60,11 @@ class GazeModel(pl.LightningModule):
     def training_step(self, batch, batch_idx):
 
         # Test beginning of each epoch
-        # if batch_idx == 0:
-        #     if not self.gazemetric_tested:
-        #         self.gazemetric_test()
-        #         self.gazemetric_tested = True
-        #     self.gaze_test()
+        if batch_idx == 0:
+            # if not self.gazemetric_tested:
+            #     self.gazemetric_test()
+            #     self.gazemetric_tested = True
+            self.gaze_test()
 
         x, y = batch
         y_hat = self.backbone(x)
@@ -154,6 +154,7 @@ class GazeModel(pl.LightningModule):
         self.backbone.eval()
         gaze_outputs   = {'y': [], 'y_hat': []}
         test_dl = DataLoader(self.test_dataset, batch_size=8, shuffle=False, num_workers=2)
+        conf_matrix = ConfusionMatrix(task='binary').to(self._device)
         for batch_idx, batch in enumerate(test_dl):
             imgs    = batch['image'].to(self._device)
             y       = batch['label'].unsqueeze(1).float().to(self._device)
@@ -166,6 +167,15 @@ class GazeModel(pl.LightningModule):
 
                 gaze_outputs['y'].append(y[i].cpu().numpy().astype(int).squeeze())
                 gaze_outputs['y_hat'].append((0.05 - gaze_norm) * 20)
+
+                conf_matrix.update(y[i], (torch.Tensor([gaze_norm]) < 0.01).float().to(self._device))
+
+        # Plot confusion matrix
+        plt.cla()
+        fig, ax = plt.subplots(figsize=(5, 5))
+        sns.heatmap(conf_matrix.compute().cpu().numpy(), annot=True, fmt='d', cmap='Blues', ax=ax)
+        self.logger.experiment.add_figure('test/confusion_matrix↑', fig)
+
 
         # Plot both plots
         y_np = np.asarray(gaze_outputs['y'])
@@ -185,7 +195,7 @@ class GazeModel(pl.LightningModule):
         ax.set_ylabel('Precision')
         ax.set_yticks(np.arange(0, 1.0, 0.1))
         ax.legend()
-        self.logger.experiment.add_figure('test/precision_recall_curve', fig)
+        self.logger.experiment.add_figure('test/precision_recall_curve', fig, global_step=self.current_epoch)
 
         # Revert back to training mode
         self.backbone.train()
