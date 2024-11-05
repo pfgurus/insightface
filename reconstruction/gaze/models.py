@@ -65,9 +65,9 @@ class GazeModel(pl.LightningModule):
 
         # Test beginning of each epoch
         if batch_idx == 0:
-            # if not self.gazemetric_tested:
-            #     self.gazemetric_test()
-            #     self.gazemetric_tested = True
+            if not self.gazemetric_tested:
+                self.gazemetric_test()
+                self.gazemetric_tested = True
             self.gaze_test()
 
         x, y = batch
