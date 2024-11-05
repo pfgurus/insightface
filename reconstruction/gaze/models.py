@@ -1,3 +1,7 @@
+import os
+import sys
+sys.path.append(os.path.join(os.path.dirname(__file__), '../..'))  # pylint: disable=wrong-import-position
+
 import pytorch_lightning as pl
 from pytorch_lightning.callbacks import ModelCheckpoint
 from pytorch_lightning.callbacks import LearningRateMonitor
