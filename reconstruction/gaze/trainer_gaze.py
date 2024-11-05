@@ -37,6 +37,7 @@ def cli_main():
     parser.add_argument('--root', default='data/gaze_refine', type=str)
     parser.add_argument('--num-gpus', default=1, type=int)
     parser.add_argument('--tf32', action='store_true')
+    parser.add_argument('--resume', type=str, default=None)
     parser = pl.Trainer.add_argparse_args(parser)
     args = parser.parse_args()
 
@@ -65,6 +66,10 @@ def cli_main():
     ckpt_path = f'../../logs/gaze_{time.strftime("%Y-%m-%d_%H-%M-%S")}'
     if not os.path.exists(ckpt_path):
         os.makedirs(ckpt_path)
+
+    if args.resume:
+        state_dict = torch.load(args.resume)
+        model.load_state_dict(state_dict['state_dict'], strict=True)
 
     # ------------
     # training
