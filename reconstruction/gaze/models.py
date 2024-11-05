@@ -65,9 +65,9 @@ class GazeModel(pl.LightningModule):
 
         # Test beginning of each epoch
         if batch_idx == 0:
-            if not self.gazemetric_tested:
-                self.gazemetric_test()
-                self.gazemetric_tested = True
+            # if not self.gazemetric_tested:
+            #     self.gazemetric_test()
+            #     self.gazemetric_tested = True
             self.gaze_test()
 
         x, y = batch
@@ -176,7 +176,7 @@ class GazeModel(pl.LightningModule):
                 conf_matrix.update(y[i], (torch.Tensor([gaze_norm]) < 0.01).float().to(self._device))
 
                 if (len(log_images))<64 and y[i].item()==0:
-                    log_image = make_log_image(img.unsqueeze(0),'src', Dir(torch.Tensor(gaze_vector)))
+                    log_image = make_log_image(img.unsqueeze(0),'src', Dir(torch.Tensor(gaze_vector[None,...])))
                     log_images.append(log_image)
 
         # Plot example images
