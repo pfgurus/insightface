@@ -13,6 +13,10 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 import cv2
 from sklearn.metrics import precision_recall_curve
+from gaze_prediction import GazePredictor
+from gaze_prediction.insightface.utils import face_align
+from gaze_prediction.utils import angles_and_vec_from_eye
+
 
 class GazeModel(pl.LightningModule):
     def __init__(self, backbone, epoch):
@@ -30,6 +34,7 @@ class GazeModel(pl.LightningModule):
         self.test_dataset = GazeImageDataset()
         self.gazemetric_outputs = {'y':[], 'y_hat':[]}
         self.gazemetric_tested = False
+        self.gaze_predictor = GazePredictor()
 
     def forward(self, x):
         # use forward for inference/predictions
@@ -90,7 +95,6 @@ class GazeModel(pl.LightningModule):
                 continue
             y = y[valid_idxs]
             gaze_vectors = [torch.Tensor(gv[0]) for i, gv in enumerate(gaze_vectors) if len(gv) == 1]
-
             gaze_vectors = torch.stack(gaze_vectors)
             gaze_norm = gaze_vectors.norm(dim=1, keepdim=True)
             gaze_norm[gaze_norm > 0.05] = 0.05
@@ -112,43 +116,20 @@ class GazeModel(pl.LightningModule):
     def gaze_test(self):
         print(f'Testing model on gaze dataset')
         self.backbone.eval()
-        from gaze_prediction import GazePredictor
-        from gaze_prediction.insightface.utils import face_align
-        gaze_predictor = GazePredictor()
         gaze_outputs   = {'y': [], 'y_hat': []}
         test_dl = DataLoader(self.test_dataset, batch_size=8, shuffle=False, num_workers=2)
         for batch_idx, batch in enumerate(test_dl):
             imgs    = batch['image'].to(self._device)
             y       = batch['label'].unsqueeze(1).float().to(self._device)
-            imgs_np = np.clip((imgs.detach().cpu().numpy()+1)*127.5,0,255).transpose(0,2,3,1).astype(np.uint8)[..., ::-1]
-            for i,img_np in enumerate(imgs_np):
-                # Transform image according to gaze predictor model
-                faces = gaze_predictor.app.get(img_np)
-                if len(faces) != 1:
+            for i,img in enumerate(imgs):
+                gaze_vector = self._compute_gaze_from_model(img,self.backbone)
+                if gaze_vector is None:
                     continue
-                face = faces[0]
-
-                bbox = face.bbox
-                width = bbox[2] - bbox[0]
-                kps = face.kps
-                center = (kps[0] + kps[1]) / 2.0
-                _size = max(width / 1.5, np.abs(kps[1][0] - kps[0][0])) * 1.5
-                rotate = 0
-                _scale = gaze_predictor.input_size / _size
-                aimg, M = face_align.transform(img_np, center, gaze_predictor.input_size, _scale, rotate)
-
-                input = cv2.cvtColor(aimg, cv2.COLOR_BGR2RGB)
-                input = np.transpose(input, (2, 0, 1))
-                input = np.expand_dims(input, 0)
-                input = torch.Tensor(input).cuda()
-                input.div_(127.5).sub_(1.0)
-
-                gaze_vector = self.backbone(input)
-                gaze_norm = gaze_vector.norm(dim=1, keepdim=True)
-                gaze_norm[gaze_norm > 0.05] = 0.05
+                gaze_norm = np.linalg.norm(gaze_vector)
+                gaze_norm = 0.05 if gaze_norm>0.05 else gaze_norm
 
                 gaze_outputs['y'].append(y[i].cpu().numpy().astype(int).squeeze())
-                gaze_outputs['y_hat'].append((0.05 - gaze_norm.cpu().numpy()).squeeze() * 20)
+                gaze_outputs['y_hat'].append((0.05 - gaze_norm) * 20)
 
         # Plot both plots
         y_np = np.asarray(gaze_outputs['y'])
@@ -198,3 +179,52 @@ class GazeModel(pl.LightningModule):
         # Manually step the scheduler at each epoch or step as required
         # Here, we're assuming the scheduler is updated every epoch
         scheduler.step(self.current_epoch)  # pass epoch if required by LambdaLR
+
+
+    def _compute_gaze_from_model(self, img: torch.Tensor, model: nn.Module):
+        '''
+        img: 1CHW [-1,1] RGB image
+        '''
+
+        img_np = np.clip((img.detach().cpu().numpy() + 1) * 127.5, 0, 255).transpose(1, 2, 0).astype(np.uint8)[...,
+                 ::-1]
+        # Transform image according to gaze predictor model
+        faces = self.gaze_predictor.app.get(img_np)
+        if len(faces) != 1:
+            None
+        face = faces[0]
+
+        # Image preprocessing
+        bbox = face.bbox
+        width = bbox[2] - bbox[0]
+        kps = face.kps
+        center = (kps[0] + kps[1]) / 2.0
+        _size = max(width / 1.5, np.abs(kps[1][0] - kps[0][0])) * 1.5
+        rotate = 0
+        _scale = self.gaze_predictor.input_size / _size
+        aimg, M = face_align.transform(img_np, center, self.gaze_predictor.input_size, _scale, rotate)
+
+        input = cv2.cvtColor(aimg, cv2.COLOR_BGR2RGB)
+        input = np.transpose(input, (2, 0, 1))
+        input = np.expand_dims(input, 0)
+        input = torch.Tensor(input).cuda()
+        input.div_(127.5).sub_(1.0)
+
+        # Model prediction
+        opred = model(input).detach().cpu().numpy().flatten().reshape((-1, 3))
+
+        # Post processing
+        opred[:, 0:2] += 1
+        opred[:, 0:2] *= (self.gaze_predictor.input_size // 2)
+        opred[:, 2] *= 10.0
+        IM = cv2.invertAffineTransform(M)
+        eye_kps = face_align.trans_points(opred, IM)
+
+        # Extracting gaze vector
+        eye_l = eye_kps[:self.gaze_predictor.num_eye, :]
+        eye_r = eye_kps[self.gaze_predictor.num_eye:, :]
+        theta_x_l, theta_y_l, vec_l = angles_and_vec_from_eye(eye_l, self.gaze_predictor.iris_idx_481)
+        theta_x_r, theta_y_r, vec_r = angles_and_vec_from_eye(eye_r, self.gaze_predictor.iris_idx_481)
+        gaze_xy = (vec_r[:2] + vec_l[:2]) / 2.0
+
+        return gaze_xy
