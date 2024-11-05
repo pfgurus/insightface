@@ -38,7 +38,8 @@ class GazeModel(pl.LightningModule):
         self.num_eye = 481*2
 
         self.test_dataset = GazeImageDataset()
-        self.ffhq_dgaze_dataset = FFHQDGazeDataset()
+        self.ffhq_dgaze_dl = DataLoader(dataset = FFHQDGazeDataset(), batch_size= 4, shuffle=False, num_workers=2)
+        self.ffhq_dgaze_iter = iter(self.ffhq_dgaze_dl)
 
         self.gazemetric_outputs = {'y':[], 'y_hat':[]}
         self.gazemetric_tested = False
@@ -76,7 +77,9 @@ class GazeModel(pl.LightningModule):
         x, y = batch
         y_hat = self.backbone(x)
         loss = self.cal_loss(y_hat, y, self.hard_mining)
-        self.log('train_loss', loss, on_epoch=True, on_step=True)
+        dgaze_loss = self.ffhq_dgaze_step()
+        self.log('train/loss', loss, on_epoch=True, on_step=True)
+        self.log('train/dgaze_loss', dgaze_loss, on_epoch=True)
 
         if batch_idx == 0:
             b = y.shape[0]
@@ -85,7 +88,31 @@ class GazeModel(pl.LightningModule):
             log_image = make_log_image(x, 'src', Dir(gaze, length=50, color=(0,1,0)),Dir(gaze_hat,length=50))
             self.logger.experiment.add_images('train/imgs', log_image, dataformats='NCHW', global_step=self.current_epoch)
 
+        return loss + dgaze_loss
+
+    def ffhq_dgaze_step(self):
+        loss = 0.0
+        try:
+            batch = next(self.ffhq_dgaze_iter)
+        except StopIteration:
+            self.ffhq_dgaze_iter = iter(self.ffhq_dgaze_dl)
+            batch = next(self.ffhq_dgaze_iter)
+
+        imgs = []
+        for img in batch['image']:
+            img = self._process_image(img)
+            if img is not None:
+                imgs.append(img)
+        if len(imgs)==0:
+            return loss
+
+        y  = self.backbone(torch.cat(imgs))
+        y  = y.view(y.shape[0],-1,3)
+        gaze_xy = self.y_to_gaze_vector(y)
+        loss+= self.loss(gaze_xy, torch.zeros_like(gaze_xy))
+
         return loss
+
 
     def validation_step(self, batch, batch_idx):
         x, y = batch
@@ -101,22 +128,24 @@ class GazeModel(pl.LightningModule):
             log_image = make_log_image(x, 'src', Dir(gaze, length=50, color=(0,1,0)),Dir(gaze_hat,length=50))
             self.logger.experiment.add_images('val/imgs', log_image, dataformats='NCHW', global_step=self.current_epoch)
 
+
     def y_to_gaze_vector(self, ys:torch.Tensor):
-        ys = ys.detach().cpu().numpy()
+
+        ys = ys
         ys[..., 0:2] += 1
         ys[..., 0:2] *= (self.gaze_predictor.input_size // 2)
         ys[..., 2] *= 10.0
 
-        gazes = []
-        for y in ys:
-            eye_l = y[:self.gaze_predictor.num_eye, :]
-            eye_r = y[self.gaze_predictor.num_eye:, :]
-            theta_x_l, theta_y_l, vec_l = angles_and_vec_from_eye(eye_l, self.gaze_predictor.iris_idx_481)
-            theta_x_r, theta_y_r, vec_r = angles_and_vec_from_eye(eye_r, self.gaze_predictor.iris_idx_481)
-            gaze_xy = (vec_r[:2] + vec_l[:2]) / 2.0
-            gazes.append(gaze_xy)
+        def vec_from_eye(eye_pts):
+            p_iris = eye_pts[:,self.gaze_predictor.iris_idx_481] - eye_pts[:,:32].mean(dim=1, keepdim=True)
+            vec    = p_iris.mean(dim=1)
+            vec    = vec/torch.linalg.norm(vec,dim=1,keepdim=True)
+            return vec
 
-        return torch.Tensor(np.stack(gazes))
+        eye_l = ys[:,:self.gaze_predictor.num_eye, :]
+        eye_r = ys[:,self.gaze_predictor.num_eye:, :]
+
+        gaze_xy = (vec_from_eye(eye_r)[:,:2] + vec_from_eye(eye_l)[:,:2])/2
 
         return gaze_xy
 
@@ -244,6 +273,33 @@ class GazeModel(pl.LightningModule):
     #     scheduler.step(self.current_epoch)  # pass epoch if required by LambdaLR
 
 
+    def _process_image(self,img:torch.Tensor):
+        img_np = np.clip((img.detach().cpu().numpy() + 1) * 127.5, 0, 255).transpose(1, 2, 0).astype(np.uint8)[...,
+                 ::-1]
+        # Transform image according to gaze predictor model
+        faces = self.gaze_predictor.app.get(img_np)
+        if len(faces) != 1:
+            return None
+        face = faces[0]
+
+        # Image preprocessing
+        bbox = face.bbox
+        width = bbox[2] - bbox[0]
+        kps = face.kps
+        center = (kps[0] + kps[1]) / 2.0
+        _size = max(width / 1.5, np.abs(kps[1][0] - kps[0][0])) * 1.5
+        rotate = 0
+        _scale = self.gaze_predictor.input_size / _size
+        aimg, M = face_align.transform(img_np, center, self.gaze_predictor.input_size, _scale, rotate)
+
+        input = cv2.cvtColor(aimg, cv2.COLOR_BGR2RGB)
+        input = np.transpose(input, (2, 0, 1))
+        input = np.expand_dims(input, 0)
+        input = torch.Tensor(input).cuda()
+        input.div_(127.5).sub_(1.0)
+
+        return input
+
     def _compute_gaze_from_model(self, img: torch.Tensor, model: nn.Module):
         '''
         img: 1CHW [-1,1] RGB image
@@ -291,4 +347,5 @@ class GazeModel(pl.LightningModule):
         gaze_xy = (vec_r[:2] + vec_l[:2]) / 2.0
 
         return gaze_xy
+
 
