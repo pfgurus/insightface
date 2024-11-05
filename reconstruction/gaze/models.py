@@ -65,15 +65,15 @@ class GazeModel(pl.LightningModule):
 
         # Test beginning of each epoch
         if batch_idx == 0:
-            if not self.gazemetric_tested:
-                self.gazemetric_test()
-                self.gazemetric_tested = True
+            # if not self.gazemetric_tested:
+            #     self.gazemetric_test()
+            #     self.gazemetric_tested = True
             self.gaze_test()
 
         x, y = batch
         y_hat = self.backbone(x)
         loss = self.cal_loss(y_hat, y, self.hard_mining)
-        self.log('train_loss', loss, on_epoch=True)
+        self.log('train_loss', loss, on_epoch=True, on_step=True)
 
         if batch_idx == 0:
             b = y.shape[0]
@@ -89,7 +89,7 @@ class GazeModel(pl.LightningModule):
 
         y_hat = self.backbone(x)
         loss = self.cal_loss(y_hat, y)
-        self.log('val_loss', loss, on_step=True)
+        self.log('val_loss', loss, on_step=True, on_epoch=True)
 
         if batch_idx == 0:
             b = y.shape[0]
@@ -159,6 +159,7 @@ class GazeModel(pl.LightningModule):
         gaze_outputs   = {'y': [], 'y_hat': []}
         test_dl = DataLoader(self.test_dataset, batch_size=8, shuffle=False, num_workers=2)
         conf_matrix = ConfusionMatrix(task='binary').to(self._device)
+        log_images  = []
         for batch_idx, batch in enumerate(test_dl):
             imgs    = batch['image'].to(self._device)
             y       = batch['label'].unsqueeze(1).float().to(self._device)
@@ -174,11 +175,18 @@ class GazeModel(pl.LightningModule):
 
                 conf_matrix.update(y[i], (torch.Tensor([gaze_norm]) < 0.01).float().to(self._device))
 
+                if (len(log_images))<64 and y[i].item()==0:
+                    log_image = make_log_image(img.unsqueeze(0),'src', Dir(torch.Tensor(gaze_vector)))
+                    log_images.append(log_image)
+
+        # Plot example images
+        self.logger.experiment.add_images('test/imgs', np.concatenate(log_images), dataformats='NCHW', global_step=self.current_epoch)
+
         # Plot confusion matrix
         plt.cla()
         fig, ax = plt.subplots(figsize=(5, 5))
         sns.heatmap(conf_matrix.compute().cpu().numpy(), annot=True, fmt='d', cmap='Blues', ax=ax)
-        self.logger.experiment.add_figure('test/confusion_matrix↑', fig)
+        self.logger.experiment.add_figure('test/confusion_matrix↑', fig, global_step=self.current_epoch)
 
 
         # Plot both plots
@@ -203,6 +211,8 @@ class GazeModel(pl.LightningModule):
 
         # Revert back to training mode
         self.backbone.train()
+
+
     def test_step(self, batch, batch_idx):
         x, y = batch
         y_hat = self.backbone(x)
@@ -210,25 +220,25 @@ class GazeModel(pl.LightningModule):
         self.log('test_loss', loss)
 
     def configure_optimizers(self):
-        #return torch.optim.Adam(self.parameters(), lr=0.0002)
-        opt = torch.optim.SGD(self.parameters(), lr = 0.1, momentum=0.9, weight_decay = 0.0005)
-        epoch_steps = [int(self.epoch*0.4), int(self.epoch*0.7), int(self.epoch*0.9)]
-        print('epoch_steps:', epoch_steps)
-        def lr_step_func(epoch):
-            return 0.1 ** len([m for m in epoch_steps if m <= epoch])
-        scheduler = torch.optim.lr_scheduler.LambdaLR(
-                optimizer=opt, lr_lambda=lr_step_func)
-        lr_scheduler = {
-                'scheduler': scheduler,
-                'name': 'learning_rate',
-                'interval':'epoch',
-                'frequency': 1}
-        return [opt], [lr_scheduler]
+        return torch.optim.AdamW(self.parameters(), lr=0.0002)
+        # opt = torch.optim.SGD(self.parameters(), lr = 0.1, momentum=0.9, weight_decay = 0.0005)
+        # epoch_steps = [int(self.epoch*0.4), int(self.epoch*0.7), int(self.epoch*0.9)]
+        # print('epoch_steps:', epoch_steps)
+        # def lr_step_func(epoch):
+        #     return 0.1 ** len([m for m in epoch_steps if m <= epoch])
+        # scheduler = torch.optim.lr_scheduler.LambdaLR(
+        #         optimizer=opt, lr_lambda=lr_step_func)
+        # lr_scheduler = {
+        #         'scheduler': scheduler,
+        #         'name': 'learning_rate',
+        #         'interval':'epoch',
+        #         'frequency': 1}
+        # return [opt], [lr_scheduler]
 
-    def lr_scheduler_step(self, scheduler, optimizer_idx, metric):
-        # Manually step the scheduler at each epoch or step as required
-        # Here, we're assuming the scheduler is updated every epoch
-        scheduler.step(self.current_epoch)  # pass epoch if required by LambdaLR
+    # def lr_scheduler_step(self, scheduler, optimizer_idx, metric):
+    #     # Manually step the scheduler at each epoch or step as required
+    #     # Here, we're assuming the scheduler is updated every epoch
+    #     scheduler.step(self.current_epoch)  # pass epoch if required by LambdaLR
 
 
     def _compute_gaze_from_model(self, img: torch.Tensor, model: nn.Module):

@@ -36,15 +36,16 @@ class GazeImageDataset(torch.utils.data.Dataset):
         self._img_files = []
         self._labels    = []
 
-        for pattern in self._pos_patterns:
-            img_files   = glob.glob(str(Path(self._pos_root_dir)/pattern), recursive=True)
-            self._img_files.extend(img_files)
-            self._labels.extend([1]*len(img_files))
 
         for pattern in self._neg_patterns:
             img_files   = glob.glob(str(Path(self._neg_root_dir)/pattern), recursive=True)
             self._img_files.extend(img_files)
             self._labels.extend([0]*len(img_files))
+
+        for pattern in self._pos_patterns:
+            img_files   = glob.glob(str(Path(self._pos_root_dir)/pattern), recursive=True)
+            self._img_files.extend(img_files)
+            self._labels.extend([1]*len(img_files))
 
         print(f'Loaded {len(self._img_files)} images,'
               f'{np.sum(self._labels)} positive samples and {len(self._img_files) - np.sum(self._labels)} negative samples')
