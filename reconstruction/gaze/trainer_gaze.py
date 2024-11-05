@@ -63,7 +63,7 @@ def cli_main():
     # model
     # ------------
     model = GazeModel(backbone=args.backbone, epoch=args.epoch)
-    ckpt_path = f'../../logs/gaze_{time.strftime("%Y-%m-%d_%H-%M-%S")}'
+    ckpt_path = f'../../logs/gaze_ffhq_dgaze_{time.strftime("%Y-%m-%d_%H-%M-%S")}'
     if not os.path.exists(ckpt_path):
         os.makedirs(ckpt_path)
 
