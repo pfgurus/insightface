@@ -172,7 +172,7 @@ class GazeModel(pl.LightningModule):
     def gaze_test(self):
         print(f'Testing model on gaze dataset')
         self.backbone.eval()
-        gaze_outputs   = {'y': [], 'y_hat': []}
+        gaze_outputs   = {'y': [], 'y_hat': [],'gaze_xy':[]}
         test_dl = DataLoader(self.test_dataset, batch_size=8, shuffle=False, num_workers=2)
         conf_matrix = ConfusionMatrix(task='binary').to(self._device)
         log_images  = []
@@ -186,6 +186,7 @@ class GazeModel(pl.LightningModule):
                 gaze_norm = np.linalg.norm(gaze_vector)
                 gaze_norm = 0.05 if gaze_norm>0.05 else gaze_norm
 
+                gaze_outputs['gaze_xy'].append(gaze_vector)
                 gaze_outputs['y'].append(y[i].cpu().numpy().astype(int).squeeze())
                 gaze_outputs['y_hat'].append((0.05 - gaze_norm) * 20)
 
@@ -203,6 +204,18 @@ class GazeModel(pl.LightningModule):
         fig, ax = plt.subplots(figsize=(5, 5))
         sns.heatmap(conf_matrix.compute().cpu().numpy(), annot=True, fmt='d', cmap='Blues', ax=ax)
         self.logger.experiment.add_figure('test/confusion_matrix↑', fig, global_step=self.current_epoch)
+
+        # Plot Gaze scatter plot
+        y_np = np.asarray(gaze_outputs['y'])
+        gaze_xy = np.asarray(gaze_outputs['gaze_xy'])
+        plt.cla()
+        fig, ax = plt.subplots()
+        ax.scatter(gaze_xy[y_np == 0, 0], gaze_xy[y_np == 0, 1], label='gaze', color='g')
+        ax.scatter(gaze_xy[y_np == 1, 0], gaze_xy[y_np == 1, 1], label='not gaze', color='r')
+        ax.set_xlabel('X')
+        ax.set_ylabel('Y')
+        ax.legend()
+        self.logger.experiment.add_figure('test/gaze_scatter', fig, global_step=self.current_epoch)
 
 
         # Plot both plots
