@@ -77,11 +77,12 @@ class GazeModel(pl.LightningModule):
         x, y = batch
         y_hat = self.backbone(x)
         loss = self.cal_loss(y_hat, y, self.hard_mining)
-        if batch_idx % 100 == 0:
-            dgaze_loss = self.ffhq_dgaze_step()
-            self.log('train/dgaze_loss', dgaze_loss, on_epoch=True)
-        else:
-            dgaze_loss = 0.0
+        # if batch_idx % 100 == 0:
+        #     dgaze_loss = self.ffhq_dgaze_step()
+        #     self.log('train/dgaze_loss', dgaze_loss, on_epoch=True)
+        # else:
+        #     dgaze_loss = 0.0
+        dgaze_loss = 0.0
         self.log('train/loss', loss, on_epoch=True, on_step=True)
 
 
@@ -132,27 +133,6 @@ class GazeModel(pl.LightningModule):
             log_image = make_log_image(x, 'src', Dir(gaze, length=50, color=(0,1,0)),Dir(gaze_hat,length=50))
             self.logger.experiment.add_images('val/imgs', log_image, dataformats='NCHW', global_step=self.current_epoch)
 
-
-    def y_to_gaze_vector(self, ys:torch.Tensor):
-
-        ys = ys
-        ys[..., 0:2] += 1
-        ys[..., 0:2] *= (self.gaze_predictor.input_size // 2)
-        ys[..., 2] *= 10.0
-
-        def vec_from_eye(eye_pts):
-            p_iris = eye_pts[:,self.gaze_predictor.iris_idx_481] - eye_pts[:,:32].mean(dim=1, keepdim=True)
-            vec    = p_iris.mean(dim=1)
-            vec    = vec/torch.linalg.norm(vec,dim=1,keepdim=True)
-            return vec
-
-        eye_l = ys[:,:self.gaze_predictor.num_eye, :]
-        eye_r = ys[:,self.gaze_predictor.num_eye:, :]
-
-        gaze_xy = (vec_from_eye(eye_r)[:,:2] + vec_from_eye(eye_l)[:,:2])/2
-
-        return gaze_xy
-
     @torch.no_grad()
     def gazemetric_test(self):
         print(f' Testing GazeMetric on test dataset')
@@ -200,7 +180,7 @@ class GazeModel(pl.LightningModule):
             imgs    = batch['image'].to(self._device)
             y       = batch['label'].unsqueeze(1).float().to(self._device)
             for i,img in enumerate(imgs):
-                gaze_vector = self._compute_gaze_from_model(img,self.backbone)
+                gaze_vector = self._compute_gaze_from_model(img)
                 if gaze_vector is None:
                     continue
                 gaze_norm = np.linalg.norm(gaze_vector)
@@ -276,6 +256,17 @@ class GazeModel(pl.LightningModule):
     #     # Here, we're assuming the scheduler is updated every epoch
     #     scheduler.step(self.current_epoch)  # pass epoch if required by LambdaLR
 
+    def _compute_gaze_from_model(self, img: torch.Tensor) -> np.ndarray or None:
+        '''
+        img: 1CHW [-1,1] RGB image
+        '''
+
+        img = self._process_image(img)
+        if img is None:
+            return None
+        gaze_xy = self.y_to_gaze_vector(self.backbone(img).view(1,-1,3)).detach().cpu().numpy().squeeze()
+
+        return gaze_xy
 
     def _process_image(self,img:torch.Tensor):
         img_np = np.clip((img.detach().cpu().numpy() + 1) * 127.5, 0, 255).transpose(1, 2, 0).astype(np.uint8)[...,
@@ -304,52 +295,22 @@ class GazeModel(pl.LightningModule):
 
         return input
 
-    def _compute_gaze_from_model(self, img: torch.Tensor, model: nn.Module):
-        '''
-        img: 1CHW [-1,1] RGB image
-        '''
+    def y_to_gaze_vector(self, ys:torch.Tensor):
 
-        img_np = np.clip((img.detach().cpu().numpy() + 1) * 127.5, 0, 255).transpose(1, 2, 0).astype(np.uint8)[...,
-                 ::-1]
-        # Transform image according to gaze predictor model
-        faces = self.gaze_predictor.app.get(img_np)
-        if len(faces) != 1:
-            None
-        face = faces[0]
+        ys = ys
+        ys[..., 0:2] += 1
+        ys[..., 0:2] *= (self.gaze_predictor.input_size // 2)
+        ys[..., 2] *= 10.0
 
-        # Image preprocessing
-        bbox = face.bbox
-        width = bbox[2] - bbox[0]
-        kps = face.kps
-        center = (kps[0] + kps[1]) / 2.0
-        _size = max(width / 1.5, np.abs(kps[1][0] - kps[0][0])) * 1.5
-        rotate = 0
-        _scale = self.gaze_predictor.input_size / _size
-        aimg, M = face_align.transform(img_np, center, self.gaze_predictor.input_size, _scale, rotate)
+        def vec_from_eye(eye_pts):
+            p_iris = eye_pts[:,self.gaze_predictor.iris_idx_481] - eye_pts[:,:32].mean(dim=1, keepdim=True)
+            vec    = p_iris.mean(dim=1)
+            vec    = vec/torch.linalg.norm(vec,dim=1,keepdim=True)
+            return vec
 
-        input = cv2.cvtColor(aimg, cv2.COLOR_BGR2RGB)
-        input = np.transpose(input, (2, 0, 1))
-        input = np.expand_dims(input, 0)
-        input = torch.Tensor(input).cuda()
-        input.div_(127.5).sub_(1.0)
+        eye_l = ys[:,:self.gaze_predictor.num_eye, :]
+        eye_r = ys[:,self.gaze_predictor.num_eye:, :]
 
-        # Model prediction
-        opred = model(input).detach().cpu().numpy().flatten().reshape((-1, 3))
-
-        # Post processing
-        opred[:, 0:2] += 1
-        opred[:, 0:2] *= (self.gaze_predictor.input_size // 2)
-        opred[:, 2] *= 10.0
-        IM = cv2.invertAffineTransform(M)
-        eye_kps = face_align.trans_points(opred, IM)
-
-        # Extracting gaze vector
-        eye_l = eye_kps[:self.gaze_predictor.num_eye, :]
-        eye_r = eye_kps[self.gaze_predictor.num_eye:, :]
-        theta_x_l, theta_y_l, vec_l = angles_and_vec_from_eye(eye_l, self.gaze_predictor.iris_idx_481)
-        theta_x_r, theta_y_r, vec_r = angles_and_vec_from_eye(eye_r, self.gaze_predictor.iris_idx_481)
-        gaze_xy = (vec_r[:2] + vec_l[:2]) / 2.0
+        gaze_xy = (vec_from_eye(eye_r)[:,:2] + vec_from_eye(eye_l)[:,:2])/2
 
         return gaze_xy
-
-

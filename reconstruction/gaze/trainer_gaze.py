@@ -31,7 +31,7 @@ def cli_main():
     # args
     # ------------
     parser = ArgumentParser()
-    parser.add_argument('--backbone', default='resnet101d', type=str)
+    parser.add_argument('--backbone', default='resnet34', type=str)
     parser.add_argument('--batch_size', default=64, type=int)
     parser.add_argument('--epoch', default=16, type=int)
     parser.add_argument('--root', default='data/gaze_refine', type=str)
