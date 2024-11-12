@@ -77,12 +77,11 @@ class GazeModel(pl.LightningModule):
         x, y = batch
         y_hat = self.backbone(x)
         loss = self.cal_loss(y_hat, y, self.hard_mining)
-        # if batch_idx % 100 == 0:
-        #     dgaze_loss = self.ffhq_dgaze_step()
-        #     self.log('train/dgaze_loss', dgaze_loss, on_epoch=True)
-        # else:
-        #     dgaze_loss = 0.0
-        dgaze_loss = 0.0
+        if batch_idx % 10 == 0:
+            dgaze_loss = self.ffhq_dgaze_step()
+            self.log('train/dgaze_loss', dgaze_loss, on_epoch=True)
+        else:
+            dgaze_loss = 0.0
         self.log('train/loss', loss, on_epoch=True, on_step=True)
 
 
